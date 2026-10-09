@@ -1,0 +1,91 @@
+{
+  "name": "mirrorcap-agent-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MetaMask Agent Wallet plugin for MirrorCap: capacity-aware momentum-breakout strategy copying on Monad via Kuru.",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "files": ["dist", "skills", "README.md"],
+  "oclif": {
+    "bin": "mm",
+    "commands": "./dist/commands"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit && node bundle.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@metamask/agent-wallet": "^7.1.0"
+  },
+  "devDependencies": {
+    "@mirrorcap/kuru-client": "0.1.0",
+    "@mirrorcap/shared-types": "0.1.0",
+    "@mirrorcap/strategy-engine": "0.1.0",
+    "@metamask/agent-wallet": "^7.1.0",
+    "esbuild": "^0.28.2",
+    "ethers": "5.7.2",
+    "typescript": "^5.6.3"
+  },
+  "mm": {
+    "schemaVersion": 1,
+    "minCliVersion": "^7.0.0",
+    "capabilities": [
+      "wallet-read",
+      "wallet-submit"
+    ],
+    "commands": [
+      {
+        "id": "mirrorcap strategies",
+        "capabilities": [],
+        "dataAccess": [],
+        "targetChains": "any"
+      },
+      {
+        "id": "mirrorcap analyze",
+        "capabilities": [
+          "wallet-read"
+        ],
+        "dataAccess": [
+          "balances"
+        ],
+        "targetChains": [
+          143,
+          10143
+        ]
+      },
+      {
+        "id": "mirrorcap follow",
+        "capabilities": [],
+        "dataAccess": [],
+        "targetChains": "any"
+      },
+      {
+        "id": "mirrorcap copy",
+        "capabilities": [
+          "wallet-submit",
+          "wallet-read"
+        ],
+        "dataAccess": [
+          "balances"
+        ],
+        "targetChains": [
+          143,
+          10143
+        ]
+      },
+      {
+        "id": "mirrorcap status",
+        "capabilities": [
+          "wallet-read"
+        ],
+        "dataAccess": [
+          "balances"
+        ],
+        "targetChains": [
+          143,
+          10143
+        ]
+      }
+    ]
+  }
+}

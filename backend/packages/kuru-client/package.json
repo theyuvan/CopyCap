@@ -1,0 +1,20 @@
+{
+  "name": "@mirrorcap/kuru-client",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mirrorcap/shared-types": "0.1.0",
+    "@kuru-labs/kuru-sdk": "^1.0.6",
+    "ethers": "5.7.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

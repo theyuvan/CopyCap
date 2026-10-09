@@ -1,0 +1,24 @@
+{
+  "name": "mirrorcap",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Capacity-aware momentum-breakout strategy copying on Monad",
+  "workspaces": [
+    "backend",
+    "backend/packages/*",
+    "frontend",
+    "agent-plugin"
+  ],
+  "scripts": {
+    "build": "npm run build -w @mirrorcap/shared-types -w @mirrorcap/capacity-engine -w @mirrorcap/strategy-engine -w @mirrorcap/kuru-client -w @mirrorcap/nansen-client && npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:api": "npm run dev --workspace @mirrorcap/api",
+    "dev:web": "npm run dev --workspace @mirrorcap/web"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3",
+    "tsx": "^4.19.1",
+    "@types/node": "^22.7.5"
+  }
+}

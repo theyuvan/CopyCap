@@ -6,11 +6,10 @@
   "workspaces": [
     "backend",
     "backend/packages/*",
-    "frontend",
-    "agent-plugin"
+    "frontend"
   ],
   "scripts": {
-    "build": "npm run build -w @mirrorcap/shared-types -w @mirrorcap/capacity-engine -w @mirrorcap/strategy-engine -w @mirrorcap/kuru-client -w @mirrorcap/nansen-client && npm run build --workspaces --if-present",
+    "build": "npm run build -w @mirrorcap/shared-types -w @mirrorcap/capacity-engine -w @mirrorcap/strategy-engine -w @mirrorcap/kuru-client -w @mirrorcap/nansen-client -w @mirrorcap/privy-client && npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "dev:api": "npm run dev --workspace @mirrorcap/api",
     "dev:web": "npm run dev --workspace @mirrorcap/web"

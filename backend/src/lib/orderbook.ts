@@ -8,7 +8,7 @@ export interface OrderBookSnapshot {
   blockNumber?: number;
 }
 
-function rpcUrlFor(network: MarketRef["network"]): string | undefined {
+export function rpcUrlFor(network: MarketRef["network"]): string | undefined {
   return network === "monad-mainnet" ? process.env.MONAD_MAINNET_RPC_URL : process.env.MONAD_TESTNET_RPC_URL;
 }
 

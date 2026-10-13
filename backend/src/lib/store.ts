@@ -53,8 +53,12 @@ export function upsertStrategy(strategy: Strategy): void {
   persist(store);
 }
 
+function sameWallet(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 export function getFollowerPolicy(strategyId: string, wallet: string): FollowerPolicy | undefined {
-  return store.followers.find((f) => f.strategyId === strategyId && f.wallet === wallet);
+  return store.followers.find((f) => f.strategyId === strategyId && sameWallet(f.wallet, wallet));
 }
 
 export function getFollowersForStrategy(strategyId: string): FollowerPolicy[] {
@@ -63,7 +67,7 @@ export function getFollowersForStrategy(strategyId: string): FollowerPolicy[] {
 
 export function upsertFollowerPolicy(policy: FollowerPolicy): void {
   const idx = store.followers.findIndex(
-    (f) => f.strategyId === policy.strategyId && f.wallet === policy.wallet,
+    (f) => f.strategyId === policy.strategyId && sameWallet(f.wallet, policy.wallet),
   );
   if (idx >= 0) store.followers[idx] = policy;
   else store.followers.push(policy);
@@ -86,7 +90,7 @@ export function upsertPosition(position: Position): void {
 }
 
 function dayKey(wallet: string, now: Date): string {
-  return `${wallet}:${now.toISOString().slice(0, 10)}`;
+  return `${wallet.toLowerCase()}:${now.toISOString().slice(0, 10)}`;
 }
 
 export function getDailyOutflow(wallet: string, now: Date): number {

@@ -1,4 +1,11 @@
-import type { Address, BoundedOrderParams, CapacityResult, FollowerPolicy } from "@mirrorcap/shared-types";
+import type {
+  Address,
+  BoundedOrderParams,
+  BoundedSellOrderParams,
+  CapacityResult,
+  FollowerPolicy,
+  SellCapacityResult,
+} from "@mirrorcap/shared-types";
 
 /**
  * Turns a CapacityResult into the bounded order parameters that will be
@@ -27,6 +34,34 @@ export function buildBoundedOrderParams(
     isBuy: true,
     requestedQuoteNotional,
     maxPrice: capacity.effectiveMaxPrice,
+    minAmountOut,
+    mode: follower.allowPartialFill ? "IOC" : "FOK",
+    fillOrKill: !follower.allowPartialFill,
+  };
+}
+
+/**
+ * SELL-side mirror of `buildBoundedOrderParams`, for a follower closing a
+ * position with a real market sell. Same non-widening guarantee: minPrice is
+ * always `capacity.effectiveMinPrice`.
+ */
+export function buildBoundedSellOrderParams(
+  capacity: SellCapacityResult,
+  marketAddress: Address,
+  follower: Pick<FollowerPolicy, "allowPartialFill">,
+): BoundedSellOrderParams {
+  if (!capacity.expectedAveragePrice) {
+    throw new Error("Cannot build a sell order: no reproducible capacity inside the effective bound.");
+  }
+
+  const size = capacity.executableSize;
+  const minAmountOut = size * capacity.effectiveMinPrice;
+
+  return {
+    marketAddress,
+    isBuy: false,
+    size,
+    minPrice: capacity.effectiveMinPrice,
     minAmountOut,
     mode: follower.allowPartialFill ? "IOC" : "FOK",
     fillOrKill: !follower.allowPartialFill,

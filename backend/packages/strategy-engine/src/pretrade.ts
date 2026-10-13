@@ -88,8 +88,8 @@ export interface CopyEvaluation {
 
 /**
  * Composes layers 1-3 of the final execution condition (OVERALL.md #9).
- * Layer 4 (Agent Wallet policy / signing / MFA) is intentionally external —
- * it happens inside the agent-plugin's wallet-submit path, never here.
+ * Layer 4 (signing) is intentionally external: Privy checks each transaction
+ * against the follower's trading-wallet policy before signing it.
  */
 export function evaluateCopyability(params: {
   strategy: Strategy;

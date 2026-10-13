@@ -1,4 +1,10 @@
-import type { CapacityInput, CapacityResult, OrderBookLevel } from "@mirrorcap/shared-types";
+import type {
+  CapacityInput,
+  CapacityResult,
+  OrderBookLevel,
+  SellCapacityInput,
+  SellCapacityResult,
+} from "@mirrorcap/shared-types";
 
 /**
  * Reproducible Capacity — the BUY-side algorithm.
@@ -172,4 +178,130 @@ export function buildCapacityCurve(
     requestedNotional,
     ...calculateBuyCapacity({ ...input, requestedNotional }),
   }));
+}
+
+/**
+ * Reproducible Capacity — the SELL-side mirror of `calculateBuyCapacity`,
+ * used when a follower closes a position with a real on-chain market sell.
+ *
+ * There is no KOL entry range to bound against here (closing is the
+ * follower's own decision, not a copied signal), so the bound is instead the
+ * follower's own `maxDriftBps` applied as slippage tolerance below the best
+ * live bid at evaluation time:
+ *
+ * - effectiveMinPrice = referencePrice * (1 - followerMaxDriftBps / 10000)
+ * - reproducibleCapacityBase = total base size fillable across the book at
+ *   prices >= effectiveMinPrice.
+ * - expectedAveragePrice is computed over only the levels needed to fill
+ *   min(requestedSize, reproducibleCapacityBase) — what THIS follower's
+ *   requested close would actually realize, not the whole book's average.
+ */
+export function calculateEffectiveMinPrice(referencePrice: number, followerMaxDriftBps: number): number {
+  return referencePrice * (1 - followerMaxDriftBps / 10000);
+}
+
+/** Walks descending bids, only counting liquidity at or above `minPrice`, up to `capBase` base units. */
+function walkBids(bids: OrderBookLevel[], minPrice: number, capBase: number): WalkResult {
+  let filledNotional = 0;
+  let filledBase = 0;
+  let levelsConsumed = 0;
+
+  const PRICE_EPSILON = 1e-9;
+  for (const level of bids) {
+    if (level.price < minPrice - PRICE_EPSILON) break;
+    if (filledBase >= capBase) break;
+
+    const remainingCap = capBase - filledBase;
+
+    if (level.size <= remainingCap) {
+      filledNotional += level.price * level.size;
+      filledBase += level.size;
+      levelsConsumed += 1;
+    } else {
+      // Partial consumption of this level to exactly hit the cap.
+      filledNotional += level.price * remainingCap;
+      filledBase += remainingCap;
+      levelsConsumed += 1;
+    }
+  }
+
+  return { filledNotional, filledBase, levelsConsumed };
+}
+
+export function calculateSellCapacity(input: SellCapacityInput): SellCapacityResult {
+  const { followerMaxDriftBps, referencePrice, requestedSize, bids } = input;
+
+  if (requestedSize <= 0) {
+    throw new Error("requestedSize must be > 0");
+  }
+
+  const effectiveMinPrice = calculateEffectiveMinPrice(referencePrice, followerMaxDriftBps);
+  const sortedBids = [...bids].sort((a, b) => b.price - a.price);
+
+  // Total reproducible capacity across the WHOLE book inside the bound (follower-specific floor).
+  const fullBookWalk = walkBids(sortedBids, effectiveMinPrice, Number.POSITIVE_INFINITY);
+  const reproducibleCapacityBase = fullBookWalk.filledBase;
+
+  if (sortedBids.length === 0 || sortedBids[0].price < effectiveMinPrice - 1e-9) {
+    return {
+      side: "SELL",
+      effectiveMinPrice,
+      expectedAveragePrice: null,
+      expectedDeviationBps: null,
+      reproducibleCapacityBase: 0,
+      canFullyExecute: false,
+      executableSize: 0,
+      status: "OUTSIDE_POLICY",
+      reason:
+        "No bids are currently available inside your effective minimum price. The market has moved beyond your configured slippage tolerance.",
+      levelsConsumed: 0,
+    };
+  }
+
+  // What THIS follower's requested close would actually realize.
+  const requestedWalk = walkBids(sortedBids, effectiveMinPrice, requestedSize);
+  const canFullyExecute = requestedWalk.filledBase >= requestedSize - 1e-9;
+  const executableSize = Math.min(requestedWalk.filledBase, requestedSize);
+
+  const expectedAveragePrice =
+    requestedWalk.filledBase > 0 ? requestedWalk.filledNotional / requestedWalk.filledBase : null;
+
+  const expectedDeviationBps =
+    expectedAveragePrice !== null ? ((referencePrice - expectedAveragePrice) / referencePrice) * 10000 : null;
+
+  const driftBudgetBps = ((referencePrice - effectiveMinPrice) / referencePrice) * 10000;
+  const usageRatio =
+    expectedDeviationBps !== null && driftBudgetBps > 0
+      ? Math.max(0, expectedDeviationBps) / driftBudgetBps
+      : 0;
+
+  let status: SellCapacityResult["status"];
+  let reason: string;
+
+  if (canFullyExecute) {
+    if (usageRatio <= DEGRADING_USAGE_RATIO) {
+      status = "COPYABLE";
+      reason = "Full requested size can be sold comfortably inside your slippage tolerance.";
+    } else {
+      status = "DEGRADING";
+      reason =
+        "Full requested size can be sold, but execution would land near the edge of your allowed slippage. The opportunity is degrading.";
+    }
+  } else {
+    status = "LIMITED_CAPACITY";
+    reason = `Only ${reproducibleCapacityBase.toFixed(6)} of your requested ${requestedSize.toFixed(6)} MON is reproducible inside your effective minimum price of ${effectiveMinPrice.toFixed(6)}.`;
+  }
+
+  return {
+    side: "SELL",
+    effectiveMinPrice,
+    expectedAveragePrice,
+    expectedDeviationBps,
+    reproducibleCapacityBase,
+    canFullyExecute,
+    executableSize,
+    status,
+    reason,
+    levelsConsumed: requestedWalk.levelsConsumed,
+  };
 }

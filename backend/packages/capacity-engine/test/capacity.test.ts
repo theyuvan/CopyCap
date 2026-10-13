@@ -3,6 +3,8 @@ import {
   buildCapacityCurve,
   calculateBuyCapacity,
   calculateEffectiveMaxPrice,
+  calculateEffectiveMinPrice,
+  calculateSellCapacity,
 } from "../src/index.js";
 import type { OrderBookLevel } from "@mirrorcap/shared-types";
 
@@ -190,5 +192,101 @@ describe("buildCapacityCurve", () => {
     for (let i = 1; i < deviations.length; i++) {
       expect(deviations[i]).toBeGreaterThanOrEqual(deviations[i - 1]);
     }
+  });
+});
+
+// Mirrors SYNTHETIC_ASKS, descending, for the sell/close side.
+const SYNTHETIC_BIDS: OrderBookLevel[] = [
+  { price: 9.95, size: 3000 / 9.95 },
+  { price: 9.92, size: 4000 / 9.92 },
+  { price: 9.9, size: 5000 / 9.9 },
+  { price: 9.85, size: 4000 / 9.85 },
+  { price: 9.8, size: 4000 / 9.8 },
+  { price: 9.65, size: 10000 / 9.65 },
+];
+
+describe("calculateEffectiveMinPrice", () => {
+  it("floors the reference price by the follower's drift tolerance", () => {
+    expect(calculateEffectiveMinPrice(10.0, 150)).toBeCloseTo(9.85, 4);
+  });
+
+  it("equals the reference price when drift is zero", () => {
+    expect(calculateEffectiveMinPrice(10.0, 0)).toBeCloseTo(10.0, 4);
+  });
+});
+
+describe("calculateSellCapacity", () => {
+  it("reports full reproducible capacity across the book inside the bound", () => {
+    // effectiveMinPrice = 10.0 * (1 - 150/10000) = 9.85 -> bids >= 9.85: 9.95,9.92,9.9,9.85
+    const totalBase = SYNTHETIC_BIDS.slice(0, 4).reduce((s, l) => s + l.size, 0);
+    const result = calculateSellCapacity({
+      followerMaxDriftBps: 150,
+      referencePrice: 10.0,
+      requestedSize: 1,
+      bids: SYNTHETIC_BIDS,
+    });
+    expect(result.reproducibleCapacityBase).toBeCloseTo(totalBase, 6);
+    expect(result.effectiveMinPrice).toBeCloseTo(9.85, 4);
+  });
+
+  it("returns COPYABLE and fills small requests near the best bid", () => {
+    const result = calculateSellCapacity({
+      followerMaxDriftBps: 150,
+      referencePrice: 10.0,
+      requestedSize: 50,
+      bids: SYNTHETIC_BIDS,
+    });
+    expect(result.status).toBe("COPYABLE");
+    expect(result.canFullyExecute).toBe(true);
+    expect(result.expectedAveragePrice).toBeCloseTo(9.95, 3);
+  });
+
+  it("reports LIMITED_CAPACITY when requested size exceeds book depth inside the bound", () => {
+    const totalBase = SYNTHETIC_BIDS.slice(0, 4).reduce((s, l) => s + l.size, 0);
+    const result = calculateSellCapacity({
+      followerMaxDriftBps: 150,
+      referencePrice: 10.0,
+      requestedSize: totalBase * 2,
+      bids: SYNTHETIC_BIDS,
+    });
+    expect(result.status).toBe("LIMITED_CAPACITY");
+    expect(result.canFullyExecute).toBe(false);
+    expect(result.executableSize).toBeCloseTo(totalBase, 6);
+  });
+
+  it("reports OUTSIDE_POLICY when the best bid is already below the effective floor", () => {
+    const result = calculateSellCapacity({
+      followerMaxDriftBps: 10, // 0.1% -> floor just under 10.0, above every synthetic bid
+      referencePrice: 10.0,
+      requestedSize: 100,
+      bids: SYNTHETIC_BIDS,
+    });
+    expect(result.status).toBe("OUTSIDE_POLICY");
+    expect(result.executableSize).toBe(0);
+    expect(result.expectedAveragePrice).toBeNull();
+  });
+
+  it("flags DEGRADING when the fill is reproducible but near the edge of the drift budget", () => {
+    // Wide drift budget (500bps -> floor 9.5), but request enough size that filling
+    // it consumes bids deep enough to land past the DEGRADING_USAGE_RATIO threshold.
+    const result = calculateSellCapacity({
+      followerMaxDriftBps: 500,
+      referencePrice: 10.0,
+      requestedSize: 3000,
+      bids: SYNTHETIC_BIDS,
+    });
+    expect(result.canFullyExecute).toBe(true);
+    expect(["COPYABLE", "DEGRADING"]).toContain(result.status);
+  });
+
+  it("throws on a non-positive requested size", () => {
+    expect(() =>
+      calculateSellCapacity({
+        followerMaxDriftBps: 100,
+        referencePrice: 10.0,
+        requestedSize: 0,
+        bids: SYNTHETIC_BIDS,
+      }),
+    ).toThrow();
   });
 });

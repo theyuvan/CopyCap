@@ -1,6 +1,15 @@
-# MirrorCap
+# CopyCap
 
 Capacity-aware momentum-breakout strategy copying on Monad.
+
+## Integration guides
+
+- [Kuru](docs/kuru/README.md): live order-book depth, reproducible capacity, and bounded order execution.
+- [Nansen](docs/nansen/README.md): Smart Money discovery and capacity-enriched opportunities.
+- [Privy](docs/privy/README.md): sign-in, follower trading wallets, and signing policies.
+
+These guides map the current implementation to its source files and describe
+the current limits of each integration.
 
 > A trader defines the strategy, the follower defines the risk, and the
 > system executes only while the market can still reproduce the opportunity.
@@ -12,7 +21,7 @@ demo the positive/negative flow.
 ## Why this isn't just slippage protection
 
 Modern copy-trading platforms already support slippage limits, order-size
-caps, and IOC/limit execution. MirrorCap's difference is upstream of the
+caps, and IOC/limit execution. CopyCap's difference is upstream of the
 order: before any copy is attempted, it answers *"how much of THIS
 follower's capital can still reproduce the trader's intended entry, given
 the live Kuru order book and this follower's own risk limits?"* — not just
@@ -28,25 +37,23 @@ backend/                Express API: strategies, follow/unfollow, capacity analy
     shared-types/       domain types (Strategy, FollowerPolicy, CapacityResult, ...)
     capacity-engine/    deterministic Reproducible Capacity algorithm (unit tested, no I/O)
     strategy-engine/    lifecycle state machine, pre-trade condition checks, 10% fee math
-    kuru-client/        real @kuru-labs/kuru-sdk wrapper + the Agent-Wallet signer bridge
+    kuru-client/        Kuru reads (@kuru-labs/kuru-sdk) + bounded market-buy encoding
     nansen-client/       real Nansen Smart Money DEX Trades client
+    privy-client/        Privy REST client, access-token verification, policy compiler
   scripts/               live-chain verification scripts (not part of the app)
 
-frontend/                Next.js UI: Strategy Feed, Smart Money Feed, Strategy Detail
-                        with the capacity curve
-
-agent-plugin/            MetaMask Agent Wallet plugin — the ONLY place a trade
-                        is ever signed/submitted (see below)
+frontend/                Next.js UI: Privy sign-in, Strategy Feed, Smart Money Feed,
+                        Strategy Detail with the capacity curve and trading wallet
 ```
 
-Responsibility split (unchanged from `overall.md` §35):
+Responsibility split:
 
 ```text
-NANSEN        -> which opportunity should I look at?
-KURU          -> can I still get it at acceptable execution?
-MIRRORCAP     -> is it reproducible for THIS follower?
-AGENT WALLET  -> am I authorized to execute it?
-MONAD         -> settle the transaction.
+NANSEN   -> which opportunity should I look at?
+KURU     -> can I still get it at acceptable execution?
+COPYCAP  -> is it reproducible for THIS follower?
+PRIVY    -> is this exact transaction inside the follower's limits? (checked at signing)
+MONAD    -> settle the transaction.
 ```
 
 ## What's real vs. labeled fallback
@@ -58,8 +65,7 @@ field the API/UI always surface (`live-kuru` / `live-nansen` vs
 
 - **Kuru order-book reads** (`backend/packages/kuru-client`) use the real
   `@kuru-labs/kuru-sdk` (`ParamFetcher.getMarketParams`,
-  `OrderBook.getL2OrderBook`, `CostEstimator.estimateMarketBuy`,
-  `IOC.placeMarket`) against the real Monad testnet/mainnet contract
+  `OrderBook.getL2OrderBook`, `CostEstimator.estimateMarketBuy`) against the real Monad testnet/mainnet contract
   addresses in `backend/packages/kuru-client/src/addresses.ts` (verified against
   [Kuru's contract-addresses page](https://docs.kuru.io/contracts/Contract-addresses)
   on 2026-10-09 — re-verify before a demo). If `MONAD_TESTNET_RPC_URL` /
@@ -71,8 +77,8 @@ field the API/UI always surface (`live-kuru` / `live-nansen` vs
   and a real resting ask from the live MON-USDC `OrderBook` contract at
   `0xa241896A7Dbe8a550D2E5fF7A914bB1989ceD2D9`, and `GET /strategies/:id/analyze`
   returns `orderBookSource: "live-kuru"` with real on-chain depth feeding the
-  capacity engine end to end. **Execution itself is also verified live**,
-  independent of the Agent Wallet plugin: `backend/scripts/real-kuru-margin-deposit.ts`
+  capacity engine end to end. **Execution itself is also verified live**:
+  `backend/scripts/real-kuru-margin-deposit.ts`
   uses a plain `ethers.Wallet` to call the real Kuru `MarginAccount.deposit`
   on Monad testnet — confirmed on-chain
   (`0xdcc502e53630e57ef93d0bdbc196b76fdab6ef337c59c1bbb51db2e71753b76b`,
@@ -98,18 +104,25 @@ field the API/UI always surface (`live-kuru` / `live-nansen` vs
   `COPYABLE` verdict. This is the full Nansen -> Kuru -> capacity pipeline
   from `overall.md` §20, proven end to end with two live sponsor APIs at
   once, not asserted.
-- **MetaMask Agent Wallet execution** (`agent-plugin/src/commands/mirrorcap/copy.ts`)
-  is not mocked at all — it builds real Kuru calldata and signs/submits
-  through `ctx.walletExecutor(...)`. **Verified against the real, installed
-  `mm` CLI (v7.1.0)**: the plugin links successfully (`mm plugins link
-  --install --accept-permissions`), `mm mirrorcap strategies`/`follow` run
-  real code against the real API, and `mm mirrorcap copy` is correctly
-  blocked with `AUTH_FAILED` when not logged in — proven by actually trying
-  it unauthenticated, not asserted. See `agent-plugin/README.md` for the
-  exact verified install sequence, the one beta-CLI rough edge found along
-  the way, and the one documented limitation: the recorded entry price
-  after a fill is the bounded-order estimate, not a decoded on-chain `Trade`
-  event.
+- **Kuru market buys are encoded against the deployed contract, not the
+  SDK's ABI.** `@kuru-labs/kuru-sdk` 1.0.6 encodes
+  `placeAndExecuteMarketBuy(uint32,uint256,bool,bool)` (`0x64216b0f`), but
+  the deployed MON-USDC market's implementation only exposes the `uint96`
+  variant (`0x7c51d6cf`) — checked by reading the EIP-1967 implementation's
+  bytecode. Simulating both against the live market: the SDK's calldata
+  reverts with empty data (no such function); ours reaches the function and
+  fails only on `TransferFromFailed()` for an unfunded caller.
+  `kuru-client/src/orders.ts` encodes the `uint96` form, checks the selector
+  exists before sending anything, and simulates every buy with
+  `eth_estimateGas` first so a moved book is rejected without spending gas.
+- **Privy** (`backend/packages/privy-client`) — see the section below. Without
+  `PRIVY_APP_ID` / `PRIVY_APP_SECRET`, sign-in and
+  every action that moves funds answer `503 PRIVY_NOT_CONFIGURED`; there is
+  no fake wallet fallback. `backend/scripts/verify-privy-live.ts` creates a
+  real policy and server wallet, asserts Privy *refuses* two out-of-policy
+  transactions, and sends one in-policy approve on Monad testnet. The
+  recorded entry price after a fill is the bounded estimate the gate
+  approved, not a decoded on-chain `Trade` event.
 
 ## Capacity engine design decisions (pinned down, not left implicit)
 
@@ -148,91 +161,108 @@ price alone implies. 25 unit tests cover every transition and the rules in
 window, unfollowing never force-closes an open position, no invented market
 exit on expiry).
 
-## MetaMask Agent Wallet: how signing actually stays out of this process
+## Privy: identity, a bounded trading wallet, and limits enforced at signing
 
-`agent-plugin/src/commands/mirrorcap/copy.ts` is the only command that moves
-funds. It builds the Kuru `IOC.placeMarket` calldata with the real SDK, but
-hands it an `ethers.Signer` adapter
-(`backend/packages/kuru-client/src/executorSigner.ts: AgentWalletSigner`) whose
-`sendTransaction` does nothing but forward the populated `{to, data, value}`
-to `ctx.walletExecutor(io, "mirrorcap:copy")` — real Agent Wallet policy,
-MFA, and signing. `signTransaction`/`signMessage` are left throwing on
-purpose. No private key exists anywhere in this codebase.
+Privy does three separate jobs, none of which is just login:
+
+1. **Embedded wallet as identity.** Followers sign in with email or Google;
+   Privy creates an embedded wallet on first login. Every API call that acts
+   for a user carries a Privy access token, verified on the server
+   (`privy-client/src/auth.ts`, ES256 against the app's published JWKS);
+   the server then only lets a request act as a wallet Privy says that user
+   controls. Funding the trading wallet is a transaction from the embedded
+   wallet, confirmed in Privy's own UI.
+2. **A server wallet per follow.** Following a strategy creates a Privy
+   server wallet for that (strategy, follower) pair. The backend signs from
+   it through Privy's wallet API, so copies execute with no popup and no
+   private key anywhere in this codebase.
+3. **The follower's limits compiled into a Privy policy.**
+   `compileTradingPolicy` (`privy-client/src/policy.ts`) turns the
+   `FollowerPolicy` into rules Privy evaluates before it will sign; anything
+   not allowed is denied by default:
+
+   | Allowed transaction | Bound |
+   | --- | --- |
+   | `approve` the quote token | spender must be this Kuru market; amount ≤ per-trade cap |
+   | `placeAndExecuteMarketBuy` on this market | quote size ≤ per-trade cap; only until the entry window closes |
+   | `transfer` the quote token | recipient must be the follower's own wallet |
+   | native MON transfer | recipient must be the follower's own wallet |
+
+   Changing risk settings re-follows, which updates the live Privy policy.
+   The UI's "Try an over-cap trade" asks Privy to sign an approve one unit
+   over the cap and shows Privy's refusal.
 
 ```text
-MirrorCap plugin -> capacity/strategy validation -> wallet-submit
-  -> Agent Wallet policy / signing / MFA -> Kuru transaction
+follower -> Privy login (embedded wallet) -> POST /strategies/:id/follow
+  -> Privy policy compiled from the limits + Privy server wallet bound to it
+POST /strategies/:id/copy
+  -> KOL condition -> follower risk + daily outflow -> live Kuru capacity
+  -> bounded buy simulated -> Privy checks policy, signs -> Kuru -> Monad
 ```
+
+The daily-outflow cap is enforced by CopyCap's own pre-trade check: Privy's
+cumulative-spend conditions only apply to `eth_signTransaction`, and copies
+use `eth_sendTransaction`.
 
 ## Running it
 
 ```bash
 npm install            # installs the whole workspace
-cp .env.example .env    # fill in RPC URLs / Nansen key if you have them
+cp .env.example .env    # RPC URLs, Nansen key, and the Privy app id/secret
 
-npm run test --workspaces --if-present   # 38 passing unit tests (capacity + lifecycle)
+npm run test --workspaces --if-present   # 55 unit tests (capacity, lifecycle, Privy policy)
 npm run build --workspaces --if-present  # typechecks + builds every package
 
+npx tsx backend/scripts/verify-privy-live.ts   # real Privy + Monad testnet check
+
 npm run dev:api    # http://localhost:4000
-npm run dev:web    # http://localhost:3000 (set MIRRORCAP_API_URL if not localhost:4000)
+npm run dev:web    # http://localhost:3000
 ```
 
-The agent plugin is a separate install into the real `mm` CLI — see
-[`agent-plugin/README.md`](./agent-plugin/README.md).
+In the Privy dashboard: enable email and Google login, and add Monad
+testnet (chain `10143`) for the app.
 
 ## Demo script
 
-### Positive flow
+### In the app (the Privy flow)
+
+1. Sign in with email or Google — Privy creates your embedded wallet.
+2. Open a strategy, click **Analyze**, then **Follow** with a max per trade,
+   max per day and max drift. A Privy trading wallet is created for this
+   follow, bound to a policy compiled from those limits; the panel lists
+   the rules Privy enforces.
+3. **Add USDC** / **Add 0.05 MON gas** — sent from your embedded wallet,
+   confirmed in Privy's UI.
+4. **Try an over-cap trade** — Privy refuses to sign it, and the refusal is
+   shown.
+5. **Copy now** — the backend re-runs the pre-trade gate, simulates the
+   bounded Kuru buy, and the trading wallet signs it through Privy. The fill
+   links to the Monad explorer and appears under Positions.
+6. **Withdraw all** — everything goes back to your embedded wallet, the only
+   destination the policy allows.
+
+### From the API
+
+Calls that act for a user need their Privy access token
+(`Authorization: Bearer <token>`, from `getAccessToken()` in the app);
+`wallet` must be a wallet that user controls.
 
 ```bash
-curl -s -X POST http://localhost:4000/strategies -H 'content-type: application/json' -d '{
-  "creator": "0x1111111111111111111111111111111111111111",
-  "market": {"marketAddress":"0xa241896A7Dbe8a550D2E5fF7A914bB1989ceD2D9","symbol":"MON-USDC","baseToken":"0x0000000000000000000000000000000000000000","quoteToken":"0x0000000000000000000000000000000000000000","network":"monad-testnet"},
-  "breakoutLevel": 10.0, "entryMin": 10.0, "entryMax": 10.2,
-  "targetMin": 11.0, "targetMax": 11.5, "stopLevel": 9.7,
-  "entryExpiresAt": "2030-01-01T00:00:00Z", "description": "MON momentum breakout demo"
-}'
-# -> note the returned "id"
+curl -s -X POST http://localhost:4000/strategies/<id>/follow   -H "authorization: Bearer $PRIVY_TOKEN" -H "content-type: application/json"   -d '{"maxTradeNotional": 10, "maxDailyOutflow": 20, "maxDriftBps": 200}'
+# -> the follow, with tradingWalletAddress + privyPolicyId
 
-curl -s -X POST http://localhost:4000/strategies/<id>/follow -H 'content-type: application/json' -d '{
-  "wallet": "0x2222222222222222222222222222222222222222",
-  "maxTradeNotional": 1000, "maxDailyOutflow": 5000, "maxDriftBps": 200, "allowPartialFill": true
-}'
+curl -s "http://localhost:4000/strategies/<id>/analyze?wallet=<your wallet>&notional=10"
+# -> COPYABLE / LIMITED_CAPACITY / OUTSIDE_POLICY, with the full capacity breakdown
 
-curl -s "http://localhost:4000/strategies/<id>/analyze?wallet=0x2222222222222222222222222222222222222222&notional=100"
-# -> status: COPYABLE, full Reproducible Capacity breakdown
+curl -s -X POST http://localhost:4000/strategies/<id>/copy   -H "authorization: Bearer $PRIVY_TOKEN" -H "content-type: application/json" -d '{"notional": 10}'
+# -> { txHash, position } or a coded refusal (NOT_COPYABLE_*, INSUFFICIENT_FUNDS, PRIVY_POLICY_DENIED, ...)
 ```
 
-Or open `http://localhost:3000/strategies/<id>?wallet=0x2222...&amount=100` to
-see the same thing with the capacity curve rendered.
-
-### Negative flow (the one that proves this isn't ordinary copy trading)
-
-Follow with a much larger size than the book can support inside the bound:
-
-```bash
-curl -s -X POST http://localhost:4000/strategies/<id>/follow -H 'content-type: application/json' -d '{
-  "wallet": "0x3333333333333333333333333333333333333333",
-  "maxTradeNotional": 50000, "maxDailyOutflow": 100000, "maxDriftBps": 200, "allowPartialFill": true
-}'
-curl -s "http://localhost:4000/strategies/<id>/analyze?wallet=0x3333333333333333333333333333333333333333&notional=50000"
-# -> status: LIMITED_CAPACITY — "Only 30000.00 of your requested 50000.00 is reproducible..."
-```
-
-Or a follower whose drift tolerance is tighter than the current best ask:
-
-```bash
-curl -s -X POST http://localhost:4000/strategies/<id>/follow -H 'content-type: application/json' -d '{
-  "wallet": "0x4444444444444444444444444444444444444444",
-  "maxTradeNotional": 1000, "maxDailyOutflow": 5000, "maxDriftBps": 0, "allowPartialFill": true
-}'
-curl -s "http://localhost:4000/strategies/<id>/analyze?wallet=0x4444444444444444444444444444444444444444&notional=100"
-# -> status: OUTSIDE_POLICY — no auto-trade is sent.
-```
-
-Both flows (and position recording + the 10% realized-profit leader fee on
-close) were exercised end-to-end against the running API while building
-this — see `docs/demo-script.md` for the full transcript.
+The negative flows still hold: follow with a size the book can't support
+inside your drift bound and `/analyze` returns `LIMITED_CAPACITY` ("Only X of
+your requested Y is reproducible…"); set `maxDriftBps: 0` below the best ask
+and it returns `OUTSIDE_POLICY` — and `/copy` refuses in both cases before
+anything is signed.
 
 ## What's intentionally not built
 

@@ -1,3 +1,18 @@
+# Ignore root-level extras unless explicitly included below.
+/*
+!/.gitignore
+!/README.md
+!/.env.example
+!/frontend/
+!/backend/
+!/docs/
+
+# Required workspace installation and build configuration.
+!/package.json
+!/package-lock.json
+!/tsconfig.base.json
+
+# Dependencies, generated files, and local secrets in any project folder.
 node_modules/
 dist/
 build/
@@ -8,4 +23,6 @@ build/
 backend/data/*.json
 !backend/data/.gitkeep
 coverage/
-docs/
+
+# Machine-local funding helper that reads a temporary test wallet key.
+/backend/scripts/_fund.mts

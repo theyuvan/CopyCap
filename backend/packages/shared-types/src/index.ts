@@ -54,6 +54,8 @@ export interface Strategy {
   strategyExpiresAt?: string;
   description?: string;
   maxStrategyNotional?: number;
+  /** Optional hard cap on number of followers who can ever follow this strategy. Enforced at follow time. */
+  maxFollowers?: number;
   createdAt: string;
   lifecycleState: StrategyLifecycleState;
 }
@@ -70,6 +72,13 @@ export interface FollowerPolicy {
   followedKolAt: string;
   /** Set when the follower unfollows the KOL; stops NEW strategies, not open positions. */
   unfollowedAt?: string;
+  /** Privy user DID of the follower who owns this policy. */
+  privyUserId?: string;
+  /** Privy server wallet that executes this follow's trades. Its funds can only reach Kuru or `wallet`. */
+  tradingWalletId?: string;
+  tradingWalletAddress?: Address;
+  /** Privy policy attached to the trading wallet, compiled from this FollowerPolicy. */
+  privyPolicyId?: string;
 }
 
 export interface OrderBookLevel {
@@ -125,6 +134,50 @@ export interface BoundedOrderParams {
   fillOrKill: boolean;
 }
 
+export interface BoundedSellOrderParams {
+  marketAddress: Address;
+  isBuy: false;
+  /** Base-asset amount being sold, pre-bound. */
+  size: number;
+  /** Hard price floor — never silently widened. */
+  minPrice: number;
+  /** Quote-asset amount expected at minPrice, used as minAmountOut for IOC. */
+  minAmountOut: number;
+  mode: ExecutionMode;
+  fillOrKill: boolean;
+}
+
+/** SELL-side mirror of `CapacityInput` (phase 2): walks bids for a follower closing a position. */
+export interface SellCapacityInput {
+  /** The follower's own max acceptable slippage below the reference price, in bps. */
+  followerMaxDriftBps: number;
+  /** Best bid at evaluation time — the anchor both the bound and the deviation are measured from. */
+  referencePrice: number;
+  /** Base-asset amount the follower wants to sell. */
+  requestedSize: number;
+  /** Live bid levels, descending by price. */
+  bids: OrderBookLevel[];
+}
+
+export interface SellCapacityResult {
+  side: "SELL";
+  /** The follower's effective floor: referencePrice bounded down by their drift tolerance. */
+  effectiveMinPrice: number;
+  /** Weighted-average price the requested size would clear at, bounded by effectiveMinPrice. */
+  expectedAveragePrice: number | null;
+  /** Deviation of expectedAveragePrice below referencePrice, in bps. Null if no liquidity. */
+  expectedDeviationBps: number | null;
+  /** Total base size reproducible inside effectiveMinPrice across the book. */
+  reproducibleCapacityBase: number;
+  /** Can the requested size be fully sold inside effectiveMinPrice? */
+  canFullyExecute: boolean;
+  /** Portion of requestedSize that IS reproducible inside the bound (<= requestedSize). */
+  executableSize: number;
+  status: CopyStatus;
+  reason: string;
+  levelsConsumed: number;
+}
+
 export interface Position {
   id: string;
   strategyId: string;
@@ -133,12 +186,16 @@ export interface Position {
   entryAvgPrice: number;
   baseAmount: number;
   quoteSpent: number;
+  /** Real on-chain tx hash, set only when this position came from an actual signed Kuru order (not a mock record). */
+  entryTxHash?: string;
   state: StrategyLifecycleState;
   exitExecutedAt?: string;
   exitAvgPrice?: number;
   quoteReceived?: number;
   realizedPnlQuote?: number;
   leaderFeeQuote?: number;
+  /** Real on-chain tx hash for the close, set only when the exit came from an actual signed Kuru sell. */
+  exitTxHash?: string;
 }
 
 export interface NansenSmartMoneyTrade {

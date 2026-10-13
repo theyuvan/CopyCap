@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Concept Video Replica (860x440)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #080808;
+            color: #ffffff;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            overflow-x: hidden;
+        }
+        .retro-glow {
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.7), 0 0 20px rgba(0, 255, 128, 0.5);
+        }
+        .neon-box {
+            box-shadow: 0 0 25px rgba(0, 255, 128, 0.15), inset 0 0 15px rgba(0, 255, 128, 0.1);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <header class="mb-4 text-center">
+        <h1 class="text-2xl font-bold tracking-wider text-emerald-400 uppercase">SMC Trading Concept Replica</h1>
+        <p class="text-xs text-neutral-400">Exact Frame Size: 860 × 440 pixels | Neon Price Action & Annotations</p>
+    </header>
+
+    <!-- Main Container matching 860x440 ratio / frame -->
+    <div class="relative rounded-2xl overflow-hidden border border-neutral-800 bg-[#0a0a0a] neon-box" style="width: 860px; height: 440px; max-width: 100%;">
+        
+        <!-- Canvas for Candlesticks & Animations -->
+        <canvas id="tradeCanvas" width="860" height="440" class="block w-full h-full cursor-pointer"></canvas>
+
+        <!-- Overlay Text Annotation Box -->
+        <div id="annotationOverlay" class="absolute inset-0 pointer-events-none flex items-center justify-center transition-opacity duration-500 opacity-0">
+            <div id="annotationText" class="px-6 py-3 bg-neutral-900/90 border border-emerald-500/50 rounded-xl text-emerald-300 font-mono text-2xl tracking-widest uppercase shadow-2xl backdrop-blur-md">
+                Loading...
+            </div>
+        </div>
+
+        <!-- Floating Controls Bar -->
+        <div class="absolute bottom-3 left-3 right-3 flex items-center justify-between px-4 py-2 bg-neutral-900/80 backdrop-blur-md rounded-xl border border-neutral-800/80 text-xs select-none">
+            <div class="flex items-center space-x-3">
+                <button id="playPauseBtn" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg transition shadow-lg shadow-emerald-900/30">Pause</button>
+                <button id="restartBtn" class="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-lg transition">Replay</button>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="currentPhaseLabel" class="text-emerald-400 font-mono font-medium">Initializing...</span>
+                <div class="w-24 h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                    <div id="progressBar" class="h-full bg-emerald-500 transition-all duration-100" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="mt-4 text-xs text-neutral-500 text-center">
+        Inspired by Smart Money Concepts (SMC) price action video aesthetics.
+    </footer>
+
+    <script>
+        const canvas = document.getElementById('tradeCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const restartBtn = document.getElementById('restartBtn');
+        const currentPhaseLabel = document.getElementById('currentPhaseLabel');
+        const progressBar = document.getElementById('progressBar');
+        const annotationOverlay = document.getElementById('annotationOverlay');
+        const annotationText = document.getElementById('annotationText');
+
+        // Animation State Variables
+        let isPlaying = true;
+        let animationTime = 0;
+        const totalDuration = 18.0; // seconds for full cycle
+
+        // Candlestick data points mimicking the reference trend
+        // { open, high, low, close, x, timeReveal }
+        const candles = [
+            { o: 280, h: 320, l: 250, c: 260, t: 0.5 }, // Red 1
+            { o: 260, h: 290, l: 210, c: 220, t: 1.2 }, // Red 2
+            { o: 220, h: 250, l: 150, c: 160, t: 1.9 }, // Red 3 (BoS point)
+            { o: 160, h: 180, l: 120, c: 140, t: 2.6 }, // Red 4
+            { o: 140, h: 150, l: 80,  c: 90,  t: 3.3 }, // Red 5 (Liquidity sweep low)
+            { o: 90,  h: 180, l: 80,  c: 170, t: 4.2 }, // Green 1 (Recovery)
+            { o: 170, h: 230, l: 160, c: 220, t: 5.0 }, // Green 2
+            { o: 220, h: 280, l: 210, c: 270, t: 5.8 }, // Green 3 (CHoCH point)
+            { o: 270, h: 310, l: 250, c: 260, t: 6.6 }, // Red correction
+            { o: 260, h: 350, l: 250, c: 340, t: 7.4 }, // Big Green impulse
+            { o: 340, h: 380, l: 320, c: 370, t: 8.2 }, // Green continuation
+            { o: 370, h: 390, l: 300, c: 310, t: 9.0 }, // Red pullback start
+            { o: 310, h: 330, l: 240, c: 250, t: 9.8 }, // Red pullback down to Demand Zone
+            { o: 250, h: 270, l: 200, c: 210, t: 10.6 },// Red touch demand zone
+            { o: 210, h: 280, l: 200, c: 270, t: 11.5 },// Confirmation green candle
+            { o: 270, h: 370, l: 260, c: 360, t: 12.5 },// Long trade push 1
+            { o: 360, h: 420, l: 350, c: 410, t: 13.5 } // Long trade push 2 (Target reached)
+        ];
+
+        // Particle system for floating neon background effects
+        const particles = Array.from({ length: 35 }, () => ({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            size: Math.random() * 2.5 + 0.5,
+            speedY: (Math.random() - 0.5) * 0.4,
+            speedX: (Math.random() - 0.5) * 0.4,
+            alpha: Math.random() * 0.6 + 0.2,
+            color: Math.random() > 0.5 ? '#00ff88' : '#ff3344'
+        }));
+
+        const annotations = [
+            { start: 1.5, end: 3.2, text: "Break of Structure (BoS)", label: "1. Break of Structure" },
+            { start: 3.3, end: 4.8, text: "Liquidity Sweep", label: "2. Liquidity Sweep" },
+            { start: 5.0, end: 6.8, text: "Change of Character (CHOCH)", label: "3. CHoCH" },
+            { start: 7.0, end: 9.5, text: "Demand Zone", label: "4. Demand Zone" },
+            { start: 9.6, end: 11.2, text: "Pullback", label: "5. Pullback" },
+            { start: 11.3, end: 13.5, text: "Confirmation (RR = 1:3)", label: "6. RR = 1:3 Setup" }
+        ];
+
+        let lastTimestamp = performance.now();
+
+        function update(timestamp) {
+            const dt = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+
+            if (isPlaying) {
+                animationTime += dt;
+                if (animationTime > totalDuration) {
+                    animationTime = 0; // Loop smoothly
+                }
+            }
+
+            render();
+            updateUI();
+            requestAnimationFrame(update);
+        }
+
+        function render() {
+            // Clear canvas with dark neon background gradient
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const bgGradient = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 50, canvas.width/2, canvas.height/2, 500);
+            bgGradient.addColorStop(0, '#121614');
+            bgGradient.addColorStop(1, '#050505');
+            ctx.fillStyle = bgGradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid lines
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+
+            // Draw floating particles
+            particles.forEach(p => {
+                p.y += p.speedY;
+                p.x += p.speedX;
+                if (p.y < 0) p.y = canvas.height;
+                if (p.y > canvas.height) p.y = 0;
+                if (p.x < 0) p.x = canvas.width;
+                if (p.x > canvas.width) p.x = 0;
+
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.alpha * 0.5;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            // Demand Zone Highlight (Active from t=7.0 to end)
+            if (animationTime >= 7.0) {
+                const zoneAlpha = Math.min(1, (animationTime - 7.0) * 2);
+                ctx.fillStyle = `rgba(0, 180, 130, ${0.15 * zoneAlpha})`;
+                ctx.strokeStyle = `rgba(0, 255, 130, ${0.5 * zoneAlpha})`;
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                ctx.fillRect(150, 240, 550, 80);
+                ctx.strokeRect(150, 240, 550, 80);
+                ctx.setLineDash([]);
+
+                // Demand Zone Label inside box
+                ctx.fillStyle = `rgba(255, 255, 255, ${0.8 * zoneAlpha})`;
+                ctx.font = 'bold 13px Inter, monospace';
+                ctx.fillText('DEMAND ZONE', 165, 290);
+            }
+
+            // Profit Target RR=1:3 Box (Active from t=11.3 to end)
+            if (animationTime >= 11.3) {
+                const profitAlpha = Math.min(1, (animationTime - 11.3) * 2);
+                ctx.fillStyle = `rgba(0, 255, 128, ${0.25 * profitAlpha})`;
+                ctx.strokeStyle = `rgba(0, 255, 128, ${0.8 * profitAlpha})`;
+                ctx.lineWidth = 2;
+                ctx.fillRect(520, 80, 280, 160);
+                ctx.strokeRect(520, 80, 280, 160);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 18px Inter, monospace';
+                ctx.fillText('RR = 1:3', 615, 165);
+            }
+
+            // BoS line
+            if (animationTime >= 1.5 && animationTime < 4.8) {
+                ctx.strokeStyle = '#eab308'; // Yellow dashed
+                ctx.lineWidth = 2;
+                ctx.setLineDash([6, 6]);
+                ctx.beginPath();
+                ctx.moveTo(100, 280);
+                ctx.lineTo(380, 280);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Liquidity Sweep Box & Line
+            if (animationTime >= 3.3 && animationTime < 5.5) {
+                ctx.strokeStyle = '#ef4444';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(330, 310, 60, 50);
+            }
+
+            // CHoCH Line
+            if (animationTime >= 5.0 && animationTime < 8.5) {
+                ctx.strokeStyle = '#3b82f6';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(250, 220);
+                ctx.lineTo(500, 220);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            const startX = 80;
+            const candleWidth = 28;
+            const candleSpacing = 42;
+
+            candles.forEach((c, index) => {
+                if (animationTime < c.t) return; // Only draw revealed candles
+
+                const x = startX + index * candleSpacing;
+                // Invert Y because canvas 0,0 is top-left
+                const yHigh = canvas.height - c.h;
+                const yLow = canvas.height - c.l;
+                const yOpen = canvas.height - c.o;
+                const yClose = canvas.height - c.c;
+
+                const isGreen = c.c <= c.o; // In screen coords, lower Y is higher price
+                const color = isGreen ? '#00ff88' : '#ff3344';
+
+                // Glow effect for candles
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 12;
+                ctx.strokeStyle = color;
+                ctx.fillStyle = color;
+                ctx.lineWidth = 2;
+
+                // Draw wick
+                ctx.beginPath();
+                ctx.moveTo(x + candleWidth / 2, yHigh);
+                ctx.lineTo(x + candleWidth / 2, yLow);
+                ctx.stroke();
+
+                // Draw body
+                const bodyY = Math.min(yOpen, yClose);
+                const bodyHeight = Math.max(Math.abs(yOpen - yClose), 4);
+                ctx.fillRect(x, bodyY, candleWidth, bodyHeight);
+                ctx.strokeRect(x, bodyY, candleWidth, bodyHeight);
+
+                // Reset shadow
+                ctx.shadowBlur = 0;
+            });
+        }
+
+        function updateUI() {
+            const progress = (animationTime / totalDuration) * 100;
+            progressBar.style.width = `${progress}%`;
+
+            // Find current active annotation
+            let currentAnn = null;
+            for (let ann of annotations) {
+                if (animationTime >= ann.start && animationTime <= ann.end) {
+                    currentAnn = ann;
+                    break;
+                }
+            }
+
+            if (currentAnn) {
+                annotationOverlay.style.opacity = '1';
+                annotationText.textContent = currentAnn.text;
+                currentPhaseLabel.textContent = currentAnn.label;
+            } else {
+                annotationOverlay.style.opacity = '0';
+                if (animationTime < 1.5) {
+                    currentPhaseLabel.textContent = "Scanning Market structure...";
+                } else if (animationTime > 13.5) {
+                    currentPhaseLabel.textContent = "Trade Target Achieved!";
+                } else {
+                    currentPhaseLabel.textContent = "Price Action Consolidation";
+                }
+            }
+        }
+
+        // Controls Event Listeners
+        playPauseBtn.addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            playPauseBtn.textContent = isPlaying ? "Pause" : "Play";
+            playPauseBtn.className = isPlaying 
+                ? "px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg transition shadow-lg shadow-emerald-900/30"
+                : "px-3 py-1.5 bg-neutral-700 hover:bg-neutral-600 text-white font-semibold rounded-lg transition";
+        });
+
+        restartBtn.addEventListener('click', () => {
+            animationTime = 0;
+            isPlaying = true;
+            playPauseBtn.textContent = "Pause";
+            playPauseBtn.className = "px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg transition shadow-lg shadow-emerald-900/30";
+        });
+
+        // Start animation loop
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createProvider } from "@mirrorcap/kuru-client";
+import { getPrivyConfig } from "../lib/privy.js";
 
 export const healthRouter = Router();
 
@@ -9,6 +10,7 @@ healthRouter.get("/", async (_req, res) => {
 
   const checks: Record<string, unknown> = {
     nansenApiKeyConfigured: Boolean(process.env.NANSEN_API_KEY),
+    privyConfigured: Boolean(getPrivyConfig()),
     monadTestnetRpcConfigured: Boolean(testnetRpc),
     monadMainnetRpcConfigured: Boolean(mainnetRpc),
   };

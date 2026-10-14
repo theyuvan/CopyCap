@@ -1,6 +1,350 @@
-# CopyCap
+<p align="center">
+  <img src="frontend/public/copycap-badge.png" alt="CopyCap logo" width="96" height="96" />
+</p>
 
-Capacity-aware momentum-breakout strategy copying on Monad.
+<h1 align="center">CopyCap</h1>
+
+<p align="center">
+  <strong>Copy it while it's still real.</strong><br />
+  Capacity-aware momentum-breakout copy trading on Kuru's live Monad order book.<br />
+  Before any copy executes, it answers one question honestly: how much of this trade can <em>this</em> follower actually get, right now?
+</p>
+
+<p align="center">
+  <img alt="Monad testnet" src="https://img.shields.io/badge/Monad-testnet%20(chain%2010143)-d4ff72?labelColor=0d0f0c" />
+  <img alt="Kuru order book" src="https://img.shields.io/badge/Kuru-live%20order%20book-d4ff72?labelColor=0d0f0c" />
+  <img alt="Stack" src="https://img.shields.io/badge/stack-Next.js%20%2B%20Express-d4ff72?labelColor=0d0f0c" />
+  <img alt="Tests" src="https://img.shields.io/badge/tests-55%20vitest-d4ff72?labelColor=0d0f0c" />
+  <img alt="Not deployed" src="https://img.shields.io/badge/live%20app-local%20only-f87171?labelColor=0d0f0c" />
+</p>
+
+```bash
+git clone <this repo>
+cd metropolois && npm install
+```
+
+**Run it locally** (nothing is deployed publicly yet — see [Limitations](#limitations-and-honest-notes)):
+[Quickstart](#quickstart-about-5-minutes) gets both the API and the app running in about five minutes.
+
+CopyCap is built on one pattern: **a leader's strategy means nothing to a follower until it's checked against what the follower can actually execute.** Most copy-trading products show a leader's historical return and let you click "copy" without ever checking whether that trade is fillable for you, at that size, right now. On a real on-chain order book — not an AMM with effectively infinite liquidity — that's the gap where followers get silently worse fills than promised. CopyCap closes it upstream of the order: every copy first computes **Reproducible Capacity** by walking the live Kuru book, and every trading wallet signs under a Privy policy that bounds exactly what it can do — enforced by Privy itself at signing, not just suggested by this app's UI.
+
+Fork it for any "leader defines an idea, follower bounds their own risk, execution only happens while the market can still reproduce it" pattern — portfolio-rebalance copying, DAO-treasury mirrored trades, or a signal-group bot that refuses to fake a fill.
+
+## Contents
+
+- [The problem](#the-problem)
+- [User flow](#user-flow)
+- [Bounty checklist](#bounty-checklist)
+- [Ecosystem integration: Kuru](#ecosystem-integration-kuru)
+- [Services used](#services-used)
+- [What it demonstrates](#what-it-demonstrates)
+- [Tech stack](#tech-stack)
+- [Proof it works](#proof-it-works)
+- [Quickstart](#quickstart-about-5-minutes)
+- [How it works](#how-it-works)
+- [Project layout](#project-layout)
+- [Configuration](#configuration)
+- [Extend it](#extend-it)
+- [Security](#security)
+- [Limitations and honest notes](#limitations-and-honest-notes)
+- [Troubleshooting](#troubleshooting)
+- [Testing](#testing)
+
+## The problem
+
+| Without CopyCap | With CopyCap |
+| --- | --- |
+| You see a leader's historical return, not whether it's reproducible for you | Every copy shows **Reproducible Capacity**: how much is actually fillable, computed from the live order book, before you click |
+| "Copy" either fills badly or silently fails | The gate (`NOT_COPYABLE_*`, `LIMITED_CAPACITY`, `OUTSIDE_POLICY`) refuses *before* anything is signed, with the reason |
+| Your downside is bounded by trusting the app's UI | Your downside is bounded by a Privy policy enforced at signing — the app's own checks are a second layer, not the only one |
+| A demo under thin liquidity just fakes a fill to look good | A real refusal (`INSUFFICIENT_FUNDS`, `NO_BIDS`) shows as what it is; a `SIMULATED` fallback is always visibly labeled, never passed off as real |
+| Leader fees come off your capital | The 10% fee is computed on **realized profit only** — zero on a flat or losing close (`strategy-engine/src/fees.ts`) |
+
+## User flow
+
+```text
+Leader                                    Follower
+------                                    --------
+Sign in (Google/email/wallet)             Sign in (Google/email/wallet — can be
+Define a momentum-breakout strategy       a different method than the leader's)
+(entry range, target, stop)          Open the strategy, click Analyze
+                                      -> Reproducible Capacity, live from Kuru
+                                      Follow: set max/trade, max/day, max drift
+                                      -> Privy trading wallet + policy created
+                                      Fund the trading wallet (from their own wallet)
+                                      Copy now
+                                      -> real Kuru buy, signed under the policy
+                                         or: an honest refusal -> Simulate instead (labeled)
+                                      Try an over-cap trade -> Privy refuses it live
+                                      Limit sell / Close position
+                                      -> real GTC sell, confirms even with no live bid
+                                      Withdraw all -> only back to their own wallet
+```
+
+## Bounty checklist
+
+What each sponsor's eligibility bar asks for, and where to check it.
+
+**Kuru — "Build the Next Consumer Trading App on Kuru"**
+
+| Requirement | Status | Evidence |
+| --- | --- | --- |
+| Meaningful use of Kuru, not a cosmetic integration | ✅ | Every price shown and every trade signed goes through the real Kuru order book — see [Ecosystem integration: Kuru](#ecosystem-integration-kuru) |
+| Defined target user segments | ✅ | Leaders with a track record, signal-group copy traders, Nansen smart-money watchers, early Monad-native users |
+| Roadmap beyond the hackathon | ✅ | Security review before real funds, mainnet market expansion, leader analytics, deeper Nansen auto-strategy detection |
+
+**Nansen AI — "Best use of Nansen"**
+
+| Requirement | Status | Evidence |
+| --- | --- | --- |
+| Meaningful integration of a Nansen API endpoint | ✅ | Real `POST /smart-money/dex-trades` call, filtered to Monad, each trade mapped to the live Kuru market and run through the real capacity engine — not a display widget |
+| Honest fallback, not silent fake data | ✅ | `source: "live-nansen"` vs `"synthetic-fallback"` returned explicitly by the API |
+
+**Privy — "Integrate Privy beyond authentication"**
+
+| Requirement | Status | Evidence |
+| --- | --- | --- |
+| Used for more than login | ✅ | Server (embedded) trading wallets, a compiled signing policy, real `sendTransaction` for every buy/sell/limit-sell/withdrawal |
+| Demo clearly shows Privy-powered functionality | ✅ | The guardrail test — Privy refusing an over-cap transaction, live — see [Security](#security) |
+
+## Ecosystem integration: Kuru
+
+**Kuru's live order book is load-bearing.** It isn't a price feed CopyCap glances at — it's the thing the entire product's honesty claim depends on. Remove it and Reproducible Capacity has nothing real to compute from.
+
+- Every strategy's capacity figure comes from walking Kuru's real `getL2Book()` depth (`backend/packages/kuru-client/src/client.ts`), not a cached or assumed price.
+- Every buy, market sell, and limit sell is a real signed call against the deployed Kuru order-book contract, encoded against its actual bytecode selector — not just the SDK's published ABI, which was found to be wrong for the live buy function (see [Security](#security)).
+- The capacity engine (`backend/packages/capacity-engine`) is Kuru-shaped on purpose: it walks asks for buys and bids for sells, bounded by the follower's own drift tolerance, exactly matching how a real order book fills a real order.
+
+What a follower gets that's hard to build without this: a pre-trade number that's actually reproducible, not a backtest.
+
+## Services used
+
+| Service | Where | What it does here |
+| --- | --- | --- |
+| **Kuru order book reads** | `backend/packages/kuru-client/src/client.ts` | Live `MarketParams`, `getL2Book()` depth, and AMM vault levels merged in, feeding the capacity engine |
+| **Kuru market buy / sell / limit sell** | `backend/packages/kuru-client/src/orders.ts` | Real signed calls, encoded against the deployed contract's verified selectors |
+| **Privy auth** | `frontend/components/WalletProvider.tsx` | Google, email or external wallet (e.g. MetaMask) sign-in, all resolving to the same user model |
+| **Privy server wallets** | `backend/src/lib/execution.ts` (`provisionTradingWallet`) | A dedicated wallet per (strategy, follower), signed server-side — no popup, no local key |
+| **Privy policy engine** | `backend/packages/privy-client/src/policy.ts` | 6 named rules compiled from the follower's own risk settings, enforced at signing |
+| **Nansen Smart Money** | `backend/packages/nansen-client`, `backend/src/lib/nansen.ts` | Real DEX-trades signal, mapped to the live Kuru market and run through the real capacity engine |
+
+## What it demonstrates
+
+| Capability | How it's used here |
+| --- | --- |
+| **Reproducible Capacity** (the core idea) | Walks the live book bounded by the follower's own drift tolerance — a computed number, not a promise. Buy side walks asks, sell side walks bids, same engine, same honesty. |
+| **Privy policy enforcement at signing** | The trading wallet's policy is checked by Privy itself, independent of this app's own pre-trade gate — proven live by the guardrail test, not just asserted. |
+| **Real market + limit execution** | `submitBoundedBuyOrder`, `submitBoundedSellOrder` (IOC, needs live liquidity) and `placeLimitSellOrder` (GTC, confirms even with none) — all real signed calls, not simulated backend writes. |
+| **Honest refusal over fake success** | `NO_LIVE_BOOK`, `INSUFFICIENT_FUNDS`, `NO_BIDS`, `PRIVY_POLICY_DENIED` are real refusals shown as what they are; nothing silently substitutes a fake fill. |
+| **Clearly-labeled simulation as a last resort** | When real execution genuinely can't proceed (no faucet for this testnet's quote token — see Limitations), the UI offers a `SIMULATED` result computed from real, live numbers — never indistinguishable from a real transaction. |
+| **10% profit-only leader fee** | Computed on realized profit, zero on flat/loss, never on capital (`strategy-engine/src/fees.ts`). |
+
+## Tech stack
+
+| Layer | Choice |
+| --- | --- |
+| Chain | Monad testnet (chain `10143`) |
+| Order book | Kuru (`@kuru-labs/kuru-sdk`, plus bytecode-verified custom encoding) |
+| Wallets / signing | Privy (embedded + server wallets, compiled policies) |
+| Off-chain signal | Nansen Smart Money DEX Trades API |
+| Backend | Express, TypeScript, npm workspaces |
+| Frontend | Next.js 14 (App Router), React 18, Tailwind, Framer Motion |
+| Testing | Vitest — 55 unit tests across capacity, lifecycle and policy logic |
+
+## Proof it works
+
+Everything below is a real Monad testnet transaction, not a fixture.
+
+| Step | Evidence |
+| --- | --- |
+| `MarginAccount.deposit` via a plain `ethers.Wallet` against the live Kuru contract | [`0xdcc502e5…b76b`](https://testnet.monadexplorer.com/tx/0xdcc502e53630e57ef93d0bdbc196b76fdab6ef337c59c1bbb51db2e71753b76b), block `69518421`, independently re-verified by reading the deposit back via `MarginAccount.getBalance()` |
+| Real GTC limit sell resting on the live book right now | 220 MON at 1.1, confirmed by reading `getL2Book()` directly (`backend/scripts/real-kuru-sell.ts`) |
+| Kuru market address in active use | [`0xa241896A7Dbe8a550D2E5fF7A914bB1989ceD2D9`](https://testnet.monadexplorer.com/address/0xa241896A7Dbe8a550D2E5fF7A914bB1989ceD2D9) |
+
+This list is intentionally short rather than padded — every row above is something you can re-verify yourself on the explorer right now. More transactions (a full copy → close loop) need a small amount of this market's quote token, which has no public faucet; see [Limitations](#limitations-and-honest-notes).
+
+## Quickstart (about 5 minutes)
+
+**Prerequisites**
+
+- Node.js (developed on v24; no `engines` field pinned, but recent LTS should work)
+- A [Privy](https://dashboard.privy.io) app, with email + Google login enabled and Monad testnet (chain `10143`) added as a supported chain
+- A Monad testnet RPC URL (the public `https://testnet-rpc.monad.xyz` works) and some testnet MON from [faucet.monad.xyz](https://faucet.monad.xyz)
+
+**1. Install**
+
+```bash
+npm install
+cp .env.example .env
+```
+
+Fill in `.env` — see [Configuration](#configuration) for what each variable does. RPC URLs are the minimum for real demo credibility; without them, Kuru reads fall back to a clearly-labeled synthetic book instead of crashing.
+
+**2. Run it**
+
+```bash
+npm run dev:api    # http://localhost:4000
+npm run dev:web    # http://localhost:3000
+```
+
+**3. Try the flow.** Sign in, open a strategy, Follow with your own risk limits, fund the trading wallet it creates, then Copy. If the quote token isn't funded (see Limitations), use **Simulate this instead** to see the same flow with clearly-labeled figures. **Try an over-cap trade** shows Privy's own refusal live.
+
+**Prefer the terminal?**
+
+```bash
+npx tsx backend/scripts/verify-privy-live.ts   # real Privy policy + Monad testnet check
+npx tsx backend/scripts/real-kuru-sell.ts      # real GTC limit sell on the live book
+```
+
+## How it works
+
+```text
+Follower -> Privy login -> POST /strategies/:id/follow
+  -> Privy policy compiled from the follower's own limits
+  -> Privy server wallet created, bound to that policy
+
+POST /strategies/:id/copy
+  -> KOL condition -> follower risk + daily outflow -> live Kuru capacity
+  -> bounded buy simulated first (eth_estimateGas) -> Privy checks policy, signs -> Kuru -> Monad
+
+POST /strategies/:id/follow/limit-sell
+  -> live book checked for context -> GTC order encoded against the verified
+     deployed selector -> Privy checks policy, signs -> rests on Kuru's book
+     -> confirms on-chain whether or not it's ever matched
+```
+
+**Reproducible Capacity**, pinned down (`overall.md` specifies the steps, not the formula — this is what `capacity-engine/src/index.ts` actually computes):
+
+- `referencePrice = strategyEntryMin` for buys (the leader's most favorable boundary); the live best bid for sells.
+- `effectiveMaxPrice` (buys) / `effectiveMinPrice` (sells) = the follower's own drift bound, clamped by the strategy's own range — the **stricter** of the two always wins, never silently widened.
+- `expectedAveragePrice` is computed only over the book levels needed to fill *this follower's* requested size, not the whole book.
+- `DEGRADING` vs `COPYABLE`: fully fillable, but the fill would burn more than 60% of the allowed drift budget → `DEGRADING` (still executes, flagged).
+
+**The daily-outflow cap is enforced by CopyCap's own pre-trade check, not Privy** — Privy's cumulative-spend conditions only apply to `eth_signTransaction`, and copies use `eth_sendTransaction`. Named honestly here rather than implied as a Privy guarantee it isn't.
+
+## Project layout
+
+```
+backend/
+  packages/
+    shared-types/       domain types (Strategy, FollowerPolicy, CapacityResult, Position, ...)
+    capacity-engine/     Reproducible Capacity — buy (asks) and sell (bids), 21 unit tests
+    strategy-engine/      lifecycle state machine, pre-trade gate, 10% fee math, 25 unit tests
+    kuru-client/          Kuru reads + bounded buy/sell/limit-sell encoding, bytecode-verified
+    nansen-client/        real Nansen Smart Money DEX Trades client
+    privy-client/         Privy REST client, access-token verification, policy compiler, 9 unit tests
+  src/
+    lib/execution.ts      wallet provisioning, real copy/close/sell/limit-sell execution
+    lib/orderbook.ts      live Kuru reads with a labeled synthetic fallback
+    lib/nansen.ts         live Smart Money reads with a labeled synthetic fallback
+    routes/strategies.ts  the API surface above
+  scripts/                live-chain verification scripts (not part of the running app)
+
+frontend/
+  app/                   landing page, strategy feed, strategy detail, smart money, portfolio
+  components/
+    TradingWalletPanel.tsx    balances, funding, real sell / limit-sell, the policy rule list
+    CopyActionPanel.tsx       real copy attempt -> honest refusal -> labeled Simulate fallback
+    ClosePositionButton.tsx   same pattern, for closing a position
+    WalletProvider.tsx        Privy sign-in: Google, email or external wallet
+  public/
+    copycap-logo.png, copycap-badge.png, copycap-logo-lockup.png   brand assets
+```
+
+## Configuration
+
+| Variable | Where | Purpose |
+| --- | --- | --- |
+| `MONAD_TESTNET_RPC_URL` / `MONAD_MAINNET_RPC_URL` | `.env` | Without these, Kuru reads fall back to a labeled synthetic book |
+| `MONAD_TESTNET_MARKET_ADDRESS` | `.env` | Overrides the default demo market; defaults to the real MON-USDC market above |
+| `NANSEN_API_KEY` | `.env` | Without it, the Smart Money feed returns one labeled synthetic trade instead of live data |
+| `PRIVY_APP_ID` / `PRIVY_APP_SECRET` | `.env` | Required for sign-in and every fund-moving action; without them the API answers `503 PRIVY_NOT_CONFIGURED`, never a fake wallet |
+| `NEXT_PUBLIC_PRIVY_APP_ID` | `.env` | Same app id, exposed to the browser for the login modal |
+| `NEXT_PUBLIC_API_URL` / `MIRRORCAP_API_URL` | `.env` | Where the frontend finds the backend |
+
+## Extend it
+
+**Add a Kuru market.** `getDefaultMarket` (`backend/packages/kuru-client/src/addresses.ts`) is the one place the demo market is chosen; point `MONAD_TESTNET_MARKET_ADDRESS` at another live Kuru market and the capacity engine, order encoding and policy compiler all follow — none of them hardcode this specific pair beyond that lookup.
+
+**Add a strategy type.** `StrategyType` (`shared-types/src/index.ts`) is currently the single literal `"MOMENTUM_BREAKOUT"` by design, kept narrow for this build rather than generalized speculatively — the capacity engine and lifecycle machine are both written against entry/target/stop semantics generic enough to extend without a rewrite.
+
+**Fork it into something else.** The pattern is "a leader's idea, bounded by a follower's own risk, executed only while it's still reproducible." DAO-treasury mirrored trades, a signal-bot that refuses to fake a fill, or any copy-execution product on a real order book.
+
+## Security
+
+**This has not been audited.** The sell-side execution path, the limit-order path, and the expanded Privy policy were all built and tested this session, not reviewed externally. Treat anything here handling real funds accordingly — see [Limitations](#limitations-and-honest-notes).
+
+### In one picture
+
+```
+ Follower                         This app's backend                 Privy + Kuru + Monad
+ --------                         -------------------                 --------------------
+ signs in (Google/email/wallet)   verifies the Privy access token
+ sets max/trade, max/day, drift   runs the pre-trade gate
+                                   (KOL condition, risk, live capacity)
+                                   builds the bounded order            Privy checks the signed-in-policy
+                                   requests a signature          ──►   rules before it will sign anything
+                                                                       in or out of cap? in or out of window?
+                                                                       right destination for a transfer?
+                                                                       ALLOW -> signs -> Kuru -> Monad
+                                                                       anything else -> DENY, refused
+```
+
+The backend's own pre-trade gate is the first layer; Privy's policy is the second, independent one, checked by Privy itself at the moment of signing — proven live by the guardrail test below, not just asserted in this README.
+
+### The Privy policy
+
+| Allowed transaction | Bound |
+| --- | --- |
+| `approve` the quote token | spender must be this Kuru market; amount ≤ per-trade cap |
+| `placeAndExecuteMarketBuy` on this market | quote size ≤ per-trade cap; only until the entry window closes |
+| `placeAndExecuteMarketSell` on this market | scoped to this market's sell function; no size cap — a sell can only convert the wallet's own MON into quote token that stays in the same wallet |
+| `addSellOrder` (GTC limit sell) on this market | same scoping, same reasoning |
+| `transfer` the quote token | recipient must be the follower's own wallet |
+| native MON transfer | recipient must be the follower's own wallet |
+
+Everything else: denied by default. Six rules, no exceptions list.
+
+| Attack | Why it fails | Where it's proven |
+| --- | --- | --- |
+| Ask the trading wallet to sign a trade over the follower's cap | The calldata condition on the trade-size field rejects it; Privy never signs | the UI's "Try an over-cap trade" — a live refusal, not a mocked one; `policy.test.ts`: *"caps the ERC-20 approve to the Kuru market at the per-trade cap"* |
+| Redirect withdrawn funds to another address | The `transfer`/native-send rules require the recipient to be the follower's own wallet, full stop | `policy.test.ts`: *"lets funds leave only toward the follower's own wallet"* |
+| Buy after the strategy's entry window has closed | A `system`/`current_unix_timestamp` condition on the buy rule itself | compiled into every policy at follow-time |
+| Sell or limit-sell outside the market this wallet is scoped to | Both rules are scoped to the specific market address, verified against its actual deployed selector, not assumed from the SDK | `policy.test.ts`: *"scopes market sell and limit sell to this market, uncapped in size"* |
+| A wrong function selector reaching the chain | `assertMarketSupportsBuy` / `assertMarketSupportsSell` check the deployed bytecode contains the expected selector before anything is sent | `kuru-client/src/orders.ts` |
+| A fake fill shown as real | Every read/write surfaces its real `source` (`live-kuru`/`live-nansen` vs `synthetic-fallback`); any demo-mode result keeps a `SIMULATED` label on screen for its full duration | `frontend/components/CopyActionPanel.tsx`, `ClosePositionButton.tsx` |
+
+## Limitations and honest notes
+
+- **Not audited.** Said twice on purpose — this is the thing to internalize before trusting this code with real funds.
+- **Not deployed anywhere public.** Local only; see Quickstart.
+- **This testnet market's quote token has no faucet.** It's a custom test token (`0x3bA3d39…`), not Circle's official Monad testnet USDC — Circle's faucet mints a *different* contract that this market doesn't accept. A real buy genuinely can't execute right now without finding a holder of this specific token.
+- **This testnet market currently has real ask liquidity but zero bid liquidity**, verified directly against the live order book. A real *market* sell has nothing to fill into right now; the GTC *limit* sell works regardless, since a resting order doesn't need a counterparty to confirm.
+- **One market, one chain, for this build.** Single Kuru MON-USDC pair on testnet; see [Extend it](#extend-it) for what generalizes and what was kept narrow on purpose.
+- **No license file yet.** This is original work from this build; a license hasn't been chosen and committed.
+- **Nansen depends on a paid API key.** Without `NANSEN_API_KEY`, the Smart Money feed is one clearly labeled synthetic trade, not an error and not silently live-looking data.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| Sign-in shows "unavailable" | `NEXT_PUBLIC_PRIVY_APP_ID` isn't set, or the frontend was started before `.env` was filled in — restart `npm run dev:web` after editing `.env` |
+| `Copy now` returns `INSUFFICIENT_FUNDS` | The trading wallet has no quote-token balance — this market's quote token has no faucet (see Limitations); use **Simulate this instead** |
+| A sell returns `NO_BIDS` | The live book's bid side is genuinely empty right now — use **Limit sell (real, any liquidity)** instead, which rests regardless |
+| A buy or sell returns `NO_LIVE_BOOK` | `MONAD_TESTNET_RPC_URL` isn't set, or the RPC call failed — the app refuses to trade on the synthetic fallback rather than fake a fill |
+| `PRIVY_POLICY_DENIED` on an action you expected to work | Check the 6 rules in the trading wallet panel — the transaction's `to`, function or recipient doesn't match one of them, by design |
+| Navigating between pages shows a blank page | Known App Router issue with `AnimatePresence mode="wait"` keyed by pathname; fixed in `frontend/components/PageTransition.tsx` (enter-only transition, no exit race) |
+
+## Testing
+
+```bash
+npm run test --workspaces --if-present   # 55 unit tests: capacity (21), lifecycle (25), Privy policy (9)
+npm run build --workspaces --if-present  # typechecks + builds every package
+
+npx tsx backend/scripts/verify-privy-live.ts     # real Privy + Monad testnet check
+npx tsx backend/scripts/verify-kuru-live.ts      # real Kuru order-book read check
+npx tsx backend/scripts/real-kuru-sell.ts        # real GTC limit sell on the live book
+```
 
 ## Integration guides
 
@@ -8,265 +352,8 @@ Capacity-aware momentum-breakout strategy copying on Monad.
 - [Nansen](docs/nansen/README.md): Smart Money discovery and capacity-enriched opportunities.
 - [Privy](docs/privy/README.md): sign-in, follower trading wallets, and signing policies.
 
-These guides map the current implementation to its source files and describe
-the current limits of each integration.
+See [`overall.md`](./overall.md) for the full product spec this build implements.
 
-> A trader defines the strategy, the follower defines the risk, and the
-> system executes only while the market can still reproduce the opportunity.
+## License
 
-See [`overall.md`](./overall.md) for the full product spec this build
-implements. This README covers what's built, how to run it, and how to
-demo the positive/negative flow.
-
-## Why this isn't just slippage protection
-
-Modern copy-trading platforms already support slippage limits, order-size
-caps, and IOC/limit execution. CopyCap's difference is upstream of the
-order: before any copy is attempted, it answers *"how much of THIS
-follower's capital can still reproduce the trader's intended entry, given
-the live Kuru order book and this follower's own risk limits?"* — not just
-"will my individual order fill inside my slippage." See `overall.md` §2 for
-the full positioning.
-
-## Architecture
-
-```text
-backend/                Express API: strategies, follow/unfollow, capacity analysis,
-                        Smart Money opportunities, position/PnL recording
-  packages/
-    shared-types/       domain types (Strategy, FollowerPolicy, CapacityResult, ...)
-    capacity-engine/    deterministic Reproducible Capacity algorithm (unit tested, no I/O)
-    strategy-engine/    lifecycle state machine, pre-trade condition checks, 10% fee math
-    kuru-client/        Kuru reads (@kuru-labs/kuru-sdk) + bounded market-buy encoding
-    nansen-client/       real Nansen Smart Money DEX Trades client
-    privy-client/        Privy REST client, access-token verification, policy compiler
-  scripts/               live-chain verification scripts (not part of the app)
-
-frontend/                Next.js UI: Privy sign-in, Strategy Feed, Smart Money Feed,
-                        Strategy Detail with the capacity curve and trading wallet
-```
-
-Responsibility split:
-
-```text
-NANSEN   -> which opportunity should I look at?
-KURU     -> can I still get it at acceptable execution?
-COPYCAP  -> is it reproducible for THIS follower?
-PRIVY    -> is this exact transaction inside the follower's limits? (checked at signing)
-MONAD    -> settle the transaction.
-```
-
-## What's real vs. labeled fallback
-
-Nothing here pretends to be a production integration it isn't. Every place
-that *can* fall back to a synthetic value does so visibly, via a `source`
-field the API/UI always surface (`live-kuru` / `live-nansen` vs
-`synthetic-fallback`):
-
-- **Kuru order-book reads** (`backend/packages/kuru-client`) use the real
-  `@kuru-labs/kuru-sdk` (`ParamFetcher.getMarketParams`,
-  `OrderBook.getL2OrderBook`, `CostEstimator.estimateMarketBuy`) against the real Monad testnet/mainnet contract
-  addresses in `backend/packages/kuru-client/src/addresses.ts` (verified against
-  [Kuru's contract-addresses page](https://docs.kuru.io/contracts/Contract-addresses)
-  on 2026-10-09 — re-verify before a demo). If `MONAD_TESTNET_RPC_URL` /
-  `MONAD_MAINNET_RPC_URL` isn't set, `backend/src/lib/orderbook.ts` falls
-  back to a deterministic synthetic book instead of crashing — and says so.
-  **Verified live**, not just type-checked: with `MONAD_TESTNET_RPC_URL`
-  pointed at the public `https://testnet-rpc.monad.xyz` endpoint, `backend/scripts/verify-kuru-live.ts`
-  connects to real Monad testnet (chain `10143`), reads real `MarketParams`
-  and a real resting ask from the live MON-USDC `OrderBook` contract at
-  `0xa241896A7Dbe8a550D2E5fF7A914bB1989ceD2D9`, and `GET /strategies/:id/analyze`
-  returns `orderBookSource: "live-kuru"` with real on-chain depth feeding the
-  capacity engine end to end. **Execution itself is also verified live**:
-  `backend/scripts/real-kuru-margin-deposit.ts`
-  uses a plain `ethers.Wallet` to call the real Kuru `MarginAccount.deposit`
-  on Monad testnet — confirmed on-chain
-  (`0xdcc502e53630e57ef93d0bdbc196b76fdab6ef337c59c1bbb51db2e71753b76b`,
-  block `69518421`, status `1`), then independently re-verified by reading
-  the deposit back via Kuru's own `MarginAccount.getBalance()`, which
-  correctly reported the credited amount. A real GTC *order* on this same
-  testnet market was also attempted end-to-end (`backend/scripts/real-kuru-sell.ts`)
-  and reached the real contract, which correctly rejected it with a decoded
-  `"Size Error"` — the market's live minimum order size is 200 MON
-  (`minSize / sizePrecision` from `ParamFetcher.getMarketParams`), more than
-  the testnet faucet provides in a day; the deposit test above exists because
-  it proves the same signing/submission/confirmation path without being
-  gated by that unrelated liquidity minimum.
-- **Nansen Smart Money** (`backend/packages/nansen-client`) calls the real
-  `POST https://api.nansen.ai/api/v1/smart-money/dex-trades` with
-  `chains: ["monad"]`. Without `NANSEN_API_KEY`, `backend/src/lib/nansen.ts`
-  returns one labeled synthetic trade instead. **Verified live** with a real
-  key: `GET /smart-money/opportunities` returns `source: "live-nansen"` with
-  real Monad Smart Money trades (real tx hashes, a wallet labeled
-  `"High Activity"`, MON bought against USDC/DUST in the trailing 24h) — each
-  one automatically mapped to the real Kuru MON-USDC market and run through
-  the **real live Kuru order book** for a real `LIMITED_CAPACITY` /
-  `COPYABLE` verdict. This is the full Nansen -> Kuru -> capacity pipeline
-  from `overall.md` §20, proven end to end with two live sponsor APIs at
-  once, not asserted.
-- **Kuru market buys are encoded against the deployed contract, not the
-  SDK's ABI.** `@kuru-labs/kuru-sdk` 1.0.6 encodes
-  `placeAndExecuteMarketBuy(uint32,uint256,bool,bool)` (`0x64216b0f`), but
-  the deployed MON-USDC market's implementation only exposes the `uint96`
-  variant (`0x7c51d6cf`) — checked by reading the EIP-1967 implementation's
-  bytecode. Simulating both against the live market: the SDK's calldata
-  reverts with empty data (no such function); ours reaches the function and
-  fails only on `TransferFromFailed()` for an unfunded caller.
-  `kuru-client/src/orders.ts` encodes the `uint96` form, checks the selector
-  exists before sending anything, and simulates every buy with
-  `eth_estimateGas` first so a moved book is rejected without spending gas.
-- **Privy** (`backend/packages/privy-client`) — see the section below. Without
-  `PRIVY_APP_ID` / `PRIVY_APP_SECRET`, sign-in and
-  every action that moves funds answer `503 PRIVY_NOT_CONFIGURED`; there is
-  no fake wallet fallback. `backend/scripts/verify-privy-live.ts` creates a
-  real policy and server wallet, asserts Privy *refuses* two out-of-policy
-  transactions, and sends one in-policy approve on Monad testnet. The
-  recorded entry price after a fill is the bounded estimate the gate
-  approved, not a decoded on-chain `Trade` event.
-
-## Capacity engine design decisions (pinned down, not left implicit)
-
-`overall.md` specifies the *steps* of the capacity algorithm but not the
-exact formula. `backend/packages/capacity-engine/src/index.ts` pins down:
-
-- `referencePrice = strategyEntryMin` (the KOL's most favorable entry
-  boundary) — both the follower's drift tolerance and the reported
-  deviation are measured from this anchor.
-- `followerBoundPrice = referencePrice * (1 + maxDriftBps / 10000)`
-- `effectiveMaxPrice = min(strategyEntryMax, followerBoundPrice)` — the
-  stricter of the two, per `overall.md` §28.
-- `expectedAveragePrice` / `expectedDeviationBps` are computed only over the
-  book levels needed to fill *this follower's* requested notional, not the
-  whole book.
-- `DEGRADING` vs `COPYABLE`: fully fillable, but the fill would consume more
-  than 60% of the allowed drift budget -> `DEGRADING` (still executes, but
-  flagged as a degrading opportunity).
-
-All of this is covered by 13 unit tests against synthetic order books
-(`backend/packages/capacity-engine/test/capacity.test.ts`), built and passing
-*before* any live Kuru connection was written, per the required build order.
-
-## Lifecycle
-
-```text
-WAITING_FOR_ENTRY -> ENTRY_ACTIVE -> POSITION_ACTIVE -> EXIT_ACTIVE -> CLOSED
-                  \-> EXPIRED (entry window passed with no entry — never auto-enters later)
-```
-
-Implemented as an explicit event-driven state machine
-(`backend/packages/strategy-engine/src/lifecycle.ts`), not a pure function of price —
-whether an entry/exit actually *executed* is a real action, not something
-price alone implies. 25 unit tests cover every transition and the rules in
-`overall.md` §34 (no re-entry after expiry, positions can outlive the entry
-window, unfollowing never force-closes an open position, no invented market
-exit on expiry).
-
-## Privy: identity, a bounded trading wallet, and limits enforced at signing
-
-Privy does three separate jobs, none of which is just login:
-
-1. **Embedded wallet as identity.** Followers sign in with email or Google;
-   Privy creates an embedded wallet on first login. Every API call that acts
-   for a user carries a Privy access token, verified on the server
-   (`privy-client/src/auth.ts`, ES256 against the app's published JWKS);
-   the server then only lets a request act as a wallet Privy says that user
-   controls. Funding the trading wallet is a transaction from the embedded
-   wallet, confirmed in Privy's own UI.
-2. **A server wallet per follow.** Following a strategy creates a Privy
-   server wallet for that (strategy, follower) pair. The backend signs from
-   it through Privy's wallet API, so copies execute with no popup and no
-   private key anywhere in this codebase.
-3. **The follower's limits compiled into a Privy policy.**
-   `compileTradingPolicy` (`privy-client/src/policy.ts`) turns the
-   `FollowerPolicy` into rules Privy evaluates before it will sign; anything
-   not allowed is denied by default:
-
-   | Allowed transaction | Bound |
-   | --- | --- |
-   | `approve` the quote token | spender must be this Kuru market; amount ≤ per-trade cap |
-   | `placeAndExecuteMarketBuy` on this market | quote size ≤ per-trade cap; only until the entry window closes |
-   | `transfer` the quote token | recipient must be the follower's own wallet |
-   | native MON transfer | recipient must be the follower's own wallet |
-
-   Changing risk settings re-follows, which updates the live Privy policy.
-   The UI's "Try an over-cap trade" asks Privy to sign an approve one unit
-   over the cap and shows Privy's refusal.
-
-```text
-follower -> Privy login (embedded wallet) -> POST /strategies/:id/follow
-  -> Privy policy compiled from the limits + Privy server wallet bound to it
-POST /strategies/:id/copy
-  -> KOL condition -> follower risk + daily outflow -> live Kuru capacity
-  -> bounded buy simulated -> Privy checks policy, signs -> Kuru -> Monad
-```
-
-The daily-outflow cap is enforced by CopyCap's own pre-trade check: Privy's
-cumulative-spend conditions only apply to `eth_signTransaction`, and copies
-use `eth_sendTransaction`.
-
-## Running it
-
-```bash
-npm install            # installs the whole workspace
-cp .env.example .env    # RPC URLs, Nansen key, and the Privy app id/secret
-
-npm run test --workspaces --if-present   # 55 unit tests (capacity, lifecycle, Privy policy)
-npm run build --workspaces --if-present  # typechecks + builds every package
-
-npx tsx backend/scripts/verify-privy-live.ts   # real Privy + Monad testnet check
-
-npm run dev:api    # http://localhost:4000
-npm run dev:web    # http://localhost:3000
-```
-
-In the Privy dashboard: enable email and Google login, and add Monad
-testnet (chain `10143`) for the app.
-
-## Demo script
-
-### In the app (the Privy flow)
-
-1. Sign in with email or Google — Privy creates your embedded wallet.
-2. Open a strategy, click **Analyze**, then **Follow** with a max per trade,
-   max per day and max drift. A Privy trading wallet is created for this
-   follow, bound to a policy compiled from those limits; the panel lists
-   the rules Privy enforces.
-3. **Add USDC** / **Add 0.05 MON gas** — sent from your embedded wallet,
-   confirmed in Privy's UI.
-4. **Try an over-cap trade** — Privy refuses to sign it, and the refusal is
-   shown.
-5. **Copy now** — the backend re-runs the pre-trade gate, simulates the
-   bounded Kuru buy, and the trading wallet signs it through Privy. The fill
-   links to the Monad explorer and appears under Positions.
-6. **Withdraw all** — everything goes back to your embedded wallet, the only
-   destination the policy allows.
-
-### From the API
-
-Calls that act for a user need their Privy access token
-(`Authorization: Bearer <token>`, from `getAccessToken()` in the app);
-`wallet` must be a wallet that user controls.
-
-```bash
-curl -s -X POST http://localhost:4000/strategies/<id>/follow   -H "authorization: Bearer $PRIVY_TOKEN" -H "content-type: application/json"   -d '{"maxTradeNotional": 10, "maxDailyOutflow": 20, "maxDriftBps": 200}'
-# -> the follow, with tradingWalletAddress + privyPolicyId
-
-curl -s "http://localhost:4000/strategies/<id>/analyze?wallet=<your wallet>&notional=10"
-# -> COPYABLE / LIMITED_CAPACITY / OUTSIDE_POLICY, with the full capacity breakdown
-
-curl -s -X POST http://localhost:4000/strategies/<id>/copy   -H "authorization: Bearer $PRIVY_TOKEN" -H "content-type: application/json" -d '{"notional": 10}'
-# -> { txHash, position } or a coded refusal (NOT_COPYABLE_*, INSUFFICIENT_FUNDS, PRIVY_POLICY_DENIED, ...)
-```
-
-The negative flows still hold: follow with a size the book can't support
-inside your drift bound and `/analyze` returns `LIMITED_CAPACITY` ("Only X of
-your requested Y is reproducible…"); set `maxDriftBps: 0` below the best ask
-and it returns `OUTSIDE_POLICY` — and `/copy` refuses in both cases before
-anything is signed.
-
-## What's intentionally not built
-
-Per `overall.md` §43: no cross-chain funding, no perps, no custom DEX, no
-lending, no generic AI chatbot, no sell-side automation (BUY-side only for
-this MVP), no yield/staking/tokenomics. The 10% leader fee is computed on
-realized profit only, never on capital (`backend/packages/strategy-engine/src/fees.ts`).
+No license file is committed yet. This is original work built for this hackathon submission.

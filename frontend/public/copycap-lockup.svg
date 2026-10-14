@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="220" viewBox="0 0 900 220">
+  <rect width="900" height="220" fill="#0d0f0c"/>
+  <rect x="40" y="40" width="140" height="140" rx="45" fill="#d4ff72"/>
+  <svg x="90" y="90" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#0d0f0c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <line x1="22" x2="18" y1="12" y2="12"/>
+    <line x1="6" x2="2" y1="12" y2="12"/>
+    <line x1="12" x2="12" y1="6" y2="2"/>
+    <line x1="12" x2="12" y1="22" y2="18"/>
+  </svg>
+  <text x="220" y="128" font-family="'JetBrains Mono', ui-monospace, monospace" font-weight="700" font-size="64" letter-spacing="-2.5">
+    <tspan fill="#f5f6ef">COPY</tspan><tspan fill="#d4ff72">CAP</tspan>
+  </text>
+</svg>

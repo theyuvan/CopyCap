@@ -14,7 +14,9 @@ import dotenv from "dotenv";
 import { ethers } from "ethers";
 import {
   KURU_ADDRESSES,
+  LIMIT_SELL_ABI_FRAGMENT,
   MARKET_BUY_ABI_FRAGMENT,
+  MARKET_SELL_ABI_FRAGMENT,
   MONAD_CHAIN_IDS,
   createProvider,
   encodeQuoteCap,
@@ -69,6 +71,8 @@ async function main() {
     maxTradeQuoteUnits: caps.approveUnits,
     maxTradeQuoteSizeUnits: caps.quoteSizeUnits,
     marketBuyAbi: MARKET_BUY_ABI_FRAGMENT,
+    marketSellAbi: MARKET_SELL_ABI_FRAGMENT,
+    limitSellAbi: LIMIT_SELL_ABI_FRAGMENT,
     entryExpiresAtUnix: Math.floor(Date.now() / 1000) + 24 * 3600,
   });
 
